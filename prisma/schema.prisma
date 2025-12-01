@@ -1,0 +1,333 @@
+// This is your Prisma schema file
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  GUEST
+  INVESTOR_UNVERIFIED
+  INVESTOR_VERIFIED
+  ADMIN
+}
+
+enum KYCStatus {
+  NOT_STARTED
+  PENDING
+  UNDER_REVIEW
+  APPROVED
+  REJECTED
+}
+
+enum InvestmentStatus {
+  INITIATED
+  DOCUMENT_REVIEW
+  SIGNED
+  PAYMENT_PENDING
+  COMPLETED
+  FAILED
+}
+
+enum TransactionType {
+  INVESTMENT
+  DIVIDEND
+  WITHDRAWAL
+  REFUND
+}
+
+enum TransactionStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+enum PropertyStatus {
+  DRAFT
+  ACTIVE
+  FUNDING
+  FUNDED
+  CLOSED
+}
+
+enum DocumentType {
+  SUBSCRIPTION_AGREEMENT
+  K1_FORM
+  DIVIDEND_STATEMENT
+  PROPERTY_DEED
+  OFFERING_MEMORANDUM
+  OTHER
+}
+
+model User {
+  id            String   @id @default(cuid())
+  clerkId       String   @unique
+  email         String   @unique
+  firstName     String?
+  lastName      String?
+  role          UserRole @default(INVESTOR_UNVERIFIED)
+  kycStatus     KYCStatus @default(NOT_STARTED)
+  walletBalance Float    @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  kycData       KYCData?
+  investments   Investment[]
+  transactions  Transaction[]
+  documents     Document[]
+  bankAccounts  BankAccount[]
+  dividends     Dividend[]
+  auditLogs     AuditLog[]
+
+  @@index([email])
+  @@index([clerkId])
+}
+
+model KYCData {
+  id                String    @id @default(cuid())
+  userId            String    @unique
+  user              User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  legalName         String
+  dateOfBirth       DateTime
+  ssn               String    // Should be encrypted
+  address           String
+  city              String
+  state             String
+  zipCode           String
+  phone             String
+  
+  northCapitalId    String?
+  status            KYCStatus @default(PENDING)
+  rejectionReason   String?
+  
+  submittedAt       DateTime  @default(now())
+  reviewedAt        DateTime?
+  updatedAt         DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model Property {
+  id                String         @id @default(cuid())
+  title             String
+  description       String         @db.Text
+  shortDescription  String
+  
+  // Location
+  address           String
+  city              String
+  state             String
+  country           String         @default("Kenya")
+  zipCode           String
+  latitude          Float?
+  longitude         Float?
+  
+  // Media
+  images            String[]       // Array of image URLs
+  videoUrl          String?
+  
+  // Financial Details
+  totalValue        Float
+  sharePrice        Float
+  totalShares       Int
+  availableShares   Int
+  fundingGoal       Float
+  currentFunding    Float          @default(0)
+  minimumInvestment Float
+  
+  // Returns
+  expectedAnnualReturn Float
+  projectedROI         Float
+  
+  // Property Details
+  propertyType      String         // e.g., "Residential", "Commercial"
+  squareFeet        Int?
+  bedrooms          Int?
+  bathrooms         Int?
+  yearBuilt         Int?
+  
+  // Status
+  status            PropertyStatus @default(DRAFT)
+  
+  // Offering Details
+  offeringStartDate DateTime?
+  offeringEndDate   DateTime?
+  northCapitalOfferingId String?
+  
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  
+  investments       Investment[]
+  documents         Document[]
+  dividends         Dividend[]
+
+  @@index([status])
+  @@index([city])
+}
+
+model Investment {
+  id                String           @id @default(cuid())
+  userId            String
+  user              User             @relation(fields: [userId], references: [id])
+  propertyId        String
+  property          Property         @relation(fields: [propertyId], references: [id])
+  
+  shares            Int
+  amount            Float
+  pricePerShare     Float
+  
+  status            InvestmentStatus @default(INITIATED)
+  
+  // Integration IDs
+  northCapitalInvestmentId String?
+  dwollaTransferId         String?
+  
+  // Document
+  documentSigned    Boolean          @default(false)
+  documentSignedAt  DateTime?
+  documentId        String?
+  
+  // Payment
+  bankAccountId     String?
+  paymentCompleted  Boolean          @default(false)
+  
+  createdAt         DateTime         @default(now())
+  completedAt       DateTime?
+  updatedAt         DateTime         @updatedAt
+
+  @@index([userId])
+  @@index([propertyId])
+  @@index([status])
+}
+
+model Transaction {
+  id          String            @id @default(cuid())
+  userId      String
+  user        User              @relation(fields: [userId], references: [id])
+  
+  type        TransactionType
+  amount      Float
+  status      TransactionStatus @default(PENDING)
+  
+  description String
+  
+  // Integration IDs
+  dwollaId    String?
+  plaidId     String?
+  
+  // Related entities
+  investmentId String?
+  propertyId   String?
+  
+  createdAt   DateTime          @default(now())
+  completedAt DateTime?
+  updatedAt   DateTime          @updatedAt
+
+  @@index([userId])
+  @@index([type])
+  @@index([status])
+}
+
+model BankAccount {
+  id              String   @id @default(cuid())
+  userId          String
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  plaidAccessToken String   // Encrypted
+  plaidAccountId   String
+  plaidItemId      String
+  
+  dwollaFundingSourceUrl String?
+  
+  bankName         String
+  accountName      String
+  accountType      String   // checking, savings
+  accountMask      String   // Last 4 digits
+  
+  isVerified       Boolean  @default(false)
+  isPrimary        Boolean  @default(false)
+  
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([userId])
+  @@unique([userId, plaidAccountId])
+}
+
+model Document {
+  id           String       @id @default(cuid())
+  userId       String
+  user         User         @relation(fields: [userId], references: [id])
+  propertyId   String?
+  property     Property?    @relation(fields: [propertyId], references: [id])
+  
+  type         DocumentType
+  title        String
+  description  String?
+  
+  fileUrl      String
+  fileName     String
+  fileSize     Int?
+  
+  isSigned     Boolean      @default(false)
+  signedAt     DateTime?
+  docusignEnvelopeId String?
+  
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@index([userId])
+  @@index([propertyId])
+  @@index([type])
+}
+
+model Dividend {
+  id          String   @id @default(cuid())
+  propertyId  String
+  property    Property @relation(fields: [propertyId], references: [id])
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  
+  amount      Float
+  shares      Int
+  amountPerShare Float
+  
+  quarter     String   // e.g., "Q1 2024"
+  year        Int
+  
+  status      TransactionStatus @default(PENDING)
+  dwollaTransferId String?
+  
+  paidAt      DateTime?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([propertyId])
+  @@index([userId])
+  @@index([status])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+  
+  action      String
+  entity      String   // e.g., "Property", "Investment", "User"
+  entityId    String
+  
+  changes     Json?    // Store the changes made
+  ipAddress   String?
+  userAgent   String?
+  
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([entity])
+  @@index([createdAt])
+}
